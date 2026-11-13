@@ -240,7 +240,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 # 等 br0 真的出现（否则开机时序会失败）
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do ip link show $BR >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
+ExecStartPre=/bin/sh -c 'for i in \$(seq 1 60); do ip link show $BR >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 ExecStart=/bin/sh -c 'ip -4 addr show $BR 2>/dev/null | grep -qw "$fixed" || ip addr add $cidr dev $BR || true'
 
 [Install]
