@@ -20,7 +20,8 @@ DRY=0
 
 log(){ printf '\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }
 warn(){ printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
-run(){ if [[ $DRY -eq 1 ]]; then echo "   [dry] $*"; else eval "$@"; fi; }
+run(){ if [[ $DRY -eq 1 ]]; then printf '   [dry] %s\n' "$*"; return 0; fi
+       "$@" >/dev/null 2>&1 || true; }
 
 net_of(){ echo "$1" | awk -F. '{print $1"."$2"."$3}'; }
 
@@ -34,7 +35,7 @@ echo
 # ---------- 1. 重新获取 DHCP ----------
 if [[ -n "${GW:-}" ]]; then
   log "1/5 重新获取租约（新路由可能换了网段）"
-  run "nmcli con up $BR >/dev/null 2>&1 || true"
+  run nmcli con up "$BR"
   sleep 3
 else
   warn "1/5 当前没有默认路由，先检查网线 / 新路由是否已就绪"
@@ -82,10 +83,10 @@ if [[ ${#STALE[@]} -eq 0 ]]; then
 else
   for a in "${STALE[@]}"; do
     echo "   删除旧地址 $a"
-    run "ip addr del $a dev $BR 2>/dev/null || true"
+    run ip addr del "$a" dev "$BR"
   done
   # NM profile 里的旧静态地址也要清掉，否则重启后又回来
-  run "nmcli con mod $BR ipv4.addresses '' >/dev/null 2>&1 || true"
+  run nmcli con mod "$BR" ipv4.addresses ''
 fi
 
 # ---------- 4. 重新计算固定别名 ----------
@@ -105,7 +106,7 @@ fi
 log "5/5 其他组件"
 if systemctl list-unit-files 2>/dev/null | grep -q '^proxy-gw.service'; then
   echo "   检测到进阶1 代理，按新网段重下规则"
-  run "bash $SELF_DIR/10-proxy-gw.sh setup >/dev/null 2>&1 || true"
+  run bash "$SELF_DIR/10-proxy-gw.sh" setup
 else
   echo "   未启用进阶1 代理，跳过"
 fi

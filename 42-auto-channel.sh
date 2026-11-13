@@ -175,7 +175,7 @@ do_probe(){
       elif echo "$st" | grep -qE '^secondary_channel=[13]'; then real=40
       else real=20; fi
     fi
-    if [[ $ok == 1 && $real == $w ]]; then echo "$ch $w" >> "$ALLOWED"; printf '  ch%-4s 请求 %-3sMHz  实际 %-3sMHz ✅\n' "$ch" "$w" "$real"
+    if [[ $ok == 1 && $real == "$w" ]]; then echo "$ch $w" >> "$ALLOWED"; printf '  ch%-4s 请求 %-3sMHz  实际 %-3sMHz ✅\n' "$ch" "$w" "$real"
     elif [[ $ok == 1 ]]; then printf '  ch%-4s 请求 %-3sMHz  实际 %-3sMHz ⚠️ 不匹配，不收录\n' "$ch" "$w" "$real"
     else printf '  ch%-4s 请求 %-3sMHz  ❌ 起不来\n' "$ch" "$w"; fi
     kill $pid 2>/dev/null; wait $pid 2>/dev/null

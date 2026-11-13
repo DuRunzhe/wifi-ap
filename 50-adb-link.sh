@@ -54,7 +54,7 @@ sum "稀疏 1s x30（adb 空闲期/省电）" 30 1
 echo
 echo "===== 3. MTU / 分片（影响 adb push/pull）====="
 for sz in 1472 1400; do
-  printf '  DF %-5s : ' "$sz"; ping -c2 -W2 -M do -s $sz "$IP" >/dev/null 2>&1 && echo "通过" || echo "不通"
+  printf '  DF %-5s : ' "$sz"; ping -c2 -W2 -M 'do' -s "$sz" "$IP" >/dev/null 2>&1 && echo "通过" || echo "不通"
 done
 echo "  wlan0 MTU: $(cat /sys/class/net/$WIFI/mtu)   br0 MTU: $(cat /sys/class/net/$BR/mtu)"
 
@@ -68,7 +68,7 @@ else
   if adb devices | awk -v d="$IP:$PORT" '$1==d{found=1} END{exit !found}'; then
     echo "  adb 已连接: $IP:$PORT"
     T0=$(date +%s%N)
-    for i in $(seq 1 10); do adb -s "$IP:$PORT" shell true >/dev/null 2>&1; done
+    for _ in $(seq 1 10); do adb -s "$IP:$PORT" shell true >/dev/null 2>&1; done
     T1=$(date +%s%N)
     awk -v a="$T0" -v b="$T1" 'BEGIN{printf "  adb shell true x10 : %.1f ms/次\n", (b-a)/1000000/10}'
     echo "  TCP 重传/分段（连接建立后）:"
