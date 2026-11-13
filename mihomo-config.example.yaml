@@ -1,0 +1,55 @@
+# mihomo 最小配置示例（由 10-proxy-gw.sh 自动生成时用的就是这个）
+# 关键三行：tproxy-port / dns.listen / allow-lan
+mixed-port: 7890
+tproxy-port: 7895
+allow-lan: true
+bind-address: '*'
+mode: rule
+log-level: info
+ipv6: false
+external-controller: 127.0.0.1:9090
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053          # 10-proxy-gw.sh 会把客户端的 53 端口 DNAT 到这里
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - '*.local'
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  fallback:
+    - https://1.1.1.1/dns-query
+    - tls://8.8.4.4:853
+
+proxy-providers:
+  sub:
+    type: http
+    url: "https://替换成你的订阅链接"
+    path: ./providers/sub.yaml
+    interval: 86400
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    use: [sub]
+  - name: AUTO
+    type: url-test
+    use: [sub]
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+
+rules:
+  - DOMAIN-SUFFIX,lan,DIRECT
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
