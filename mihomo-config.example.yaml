@@ -1,9 +1,15 @@
 # mihomo 最小配置示例（由 10-proxy-gw.sh 自动生成时用的就是这个）
 # 关键三行：tproxy-port / dns.listen / allow-lan
+#
+# ⚠️ allow-lan: true 时 7890 端口无鉴权，同网段任何人都能当代理用。
+#    生产/不可信局域网请把 bind-address 收紧到局域网地址，并启用鉴权：
+#      bind-address: '192.168.1.250'
+#      authentication:
+#        - "user:pass"
 mixed-port: 7890
 tproxy-port: 7895
 allow-lan: true
-bind-address: '*'
+bind-address: '*'           # 仅演示；10-proxy-gw.sh 生成时会自动填成 br0 地址
 mode: rule
 log-level: info
 ipv6: false
@@ -18,6 +24,13 @@ dns:
   fake-ip-filter:
     - '*.lan'
     - '*.local'
+    - 'time.*.com'
+    - 'ntp.*.com'
+    - 'localhost.ptlogin2.qq.com'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+    - '+.srv.nintendo.net'
+    - '+.stun.playstation.net'
   nameserver:
     - 223.5.5.5
     - 119.29.29.29

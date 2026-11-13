@@ -43,6 +43,7 @@ stat_line(){ awk '/^ *wlan0:/{printf "  rx: %s pkts / %s errs / %s drop   tx: %s
 echo "===== 0. 环境 ====="
 ip -4 -o addr show "$BR" 2>/dev/null | awk '{print "  "$BR": "$4}'
 echo "  SSID/模式: $(iw dev "$WIFI" info 2>/dev/null | awk '/ssid/{s=$2}/type/{t=$2}END{print s" / "t}')"
+echo "  上传口 $UPLINK: $(cat /sys/class/net/$UPLINK/operstate 2>/dev/null || echo 未知) / $(cat /sys/class/net/$UPLINK/speed 2>/dev/null || echo '?')Mbps"
 echo "  已连 WiFi 客户端: $(wifi_macs | wc -l)"
 echo "  无线计数（测前）:"; stat_line
 

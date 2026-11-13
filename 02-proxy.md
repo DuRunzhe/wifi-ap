@@ -73,6 +73,11 @@ DNS       <本机 br0 地址>
 | nat POSTROUTING | `-i br0 -o eth0` MASQUERADE（同网段必需） |
 | ip rule/table 100 | `fwmark 1 → local default dev lo`（TPROXY 标准配套） |
 
+> ⚠️ **安全提示**：生成的配置把 `bind-address` 绑定到 br0 的局域网地址（不是 `*`），
+> 但 `allow-lan` 下的 `7890` 是**无鉴权**的 HTTP/SOCKS 混合端口，同网段任何设备都能直接拿它当代理。
+> 家庭内网可接受；宿舍/办公等不可信网段请取消配置里的 `authentication` 注释，改成 `"user:pass"`。
+> `external-controller` 已固定绑 `127.0.0.1:9090`，不对外暴露。
+
 验证：
 
 ```bash

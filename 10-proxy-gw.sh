@@ -158,10 +158,15 @@ write_config() {
   log "生成 $MIHOMO_CONF（tproxy-port=$TPORT, dns=:$DNSPORT）"
   mkdir -p /etc/mihomo
   cat > "$MIHOMO_CONF" <<EOF
+# 只监听局域网（br0）地址：不给 tailscale / usb0 / docker 等其它网卡开放代理端口
 mixed-port: 7890
 tproxy-port: $TPORT
 allow-lan: true
-bind-address: '*'
+bind-address: '$LOCAL_IP'
+# ⚠️ allow-lan 下 7890 端口无鉴权，同网段任何人都能当代理用。
+# 需要在多用户/不可信局域网部署时取消下面注释（mihomo 1.18+）：
+# authentication:
+#   - "user:pass"
 mode: rule
 log-level: info
 ipv6: false
@@ -177,6 +182,12 @@ dns:
     - '*.lan'
     - '*.local'
     - 'time.*.com'
+    - 'ntp.*.com'
+    - 'localhost.ptlogin2.qq.com'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+    - '+.srv.nintendo.net'
+    - '+.stun.playstation.net'
   nameserver:
     - 223.5.5.5
     - 119.29.29.29

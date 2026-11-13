@@ -18,6 +18,11 @@ wifi-ap/
 ├── mihomo-config.example.yaml   # 阶段1：mihomo 最小配置模板
 ├── 20-tailscale.sh              # 阶段2：虚拟局域网（本次先不做）
 ├── 30-router-changed.sh         # 换主路由/换网段后的一键适配
+├── 40-latency.sh                # 运维：无线一跳延时/抖动/丢包体检
+├── 41-channel-scan.sh           # 运维：周边信道占用扫描
+├── 42-auto-channel.sh           # 运维：按实测选出可用信道/带宽白名单
+├── 50-adb-link.sh               # 运维：adb over WiFi 链路质量实测
+├── run-ap-setup.sh              # 脱离 SSH 会话启动 01-ap-bridge.sh（建桥必断连）
 └── 99-revert.sh                 # 一键回滚基础层
 ```
 
