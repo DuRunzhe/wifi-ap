@@ -84,10 +84,14 @@ metric_sta(){   hostapd_cli -i "$WIFI" all_sta 2>/dev/null | grep -cE '^[0-9a-f]
 metric_state(){ hostapd_cli -i "$WIFI" status 2>/dev/null | sed -n 's/^state=//p'; }
 
 # 当前是否满足"健康"条件；不健康时把原因写进 REASONS
+# TX Err 只作为辅助证据：驱动偶发报错并不影响 beacon，单独触发会误重启；
+# 真正的硬故障信号是「服务异常 / 非 AP 模式 / tx_packets 停涨」。
 REASONS=()
+TXRERR_NOTE=""
 evaluate(){
-  local state txerr txp now delta_t per_sec
+  local state txerr txp now delta_t per_sec txerr_delta
   REASONS=()
+  TXRERR_NOTE=""
   now=$(date +%s)
   load_state
   txerr=$(metric_txerr)
@@ -116,7 +120,9 @@ evaluate(){
   [[ $state == ENABLED ]] || REASONS+=("hostapd state=${state:-未知}")
   iw dev "$WIFI" info 2>/dev/null | grep -q 'type AP' || REASONS+=("$WIFI 不是 AP 模式")
   [[ $per_sec -lt $MIN_TXP_RATIO ]] && REASONS+=("tx_packets ${per_sec}/s < ${MIN_TXP_RATIO}/s（beacon 疑似停发）")
-  [[ $(( txerr - LAST_TXERR )) -gt $MAX_TXERR ]] && REASONS+=("TX Err 本周期新增 $(( txerr - LAST_TXERR )) > $MAX_TXERR")
+
+  txerr_delta=$(( txerr - LAST_TXERR ))
+  [[ $txerr_delta -gt $MAX_TXERR ]] && TXRERR_NOTE="TX Err 本周期新增 $txerr_delta（仅告警；beacon 正常时不动作）"
 
   CUR_TXERR=$txerr; CUR_TXP=$txp; CUR_NOW=$now; CUR_PER_SEC=$per_sec; CUR_STA=$(metric_sta)
   (( ${#REASONS[@]} == 0 ))
@@ -127,6 +133,7 @@ show_metrics(){
   say "  TX Err 累计  : ${CUR_TXERR:-?}（本周期新增 $(( ${CUR_TXERR:-0} - LAST_TXERR ))）"
   say "  hostapd state: $(metric_state || true)"
   say "  已连客户端   : ${CUR_STA:-0}"
+  [[ -n ${TXRERR_NOTE:-} ]] && say "  ⚠️  ${TXRERR_NOTE}"
 }
 
 # ---------------------------------------------------------------- 动作
@@ -179,7 +186,11 @@ do_check(){
       log "恢复正常（此前连续异常 $BAD_STREAK 次）"
     fi
     save_state "$CUR_TXERR" "$CUR_TXP" "$CUR_NOW" "$LAST_ACTION" 0
+    if [[ -n ${TXRERR_NOTE:-} ]]; then
+      log "健康，但 $TXRERR_NOTE"
+    fi
     say "OK：tx_packets ${CUR_PER_SEC}/s，TX Err 累计 ${CUR_TXERR}，客户端 ${CUR_STA}"
+    [[ -n ${TXRERR_NOTE:-} ]] && say "  ⚠️  ${TXRERR_NOTE}"
     exit 0
   fi
 
