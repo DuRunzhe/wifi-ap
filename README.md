@@ -22,6 +22,7 @@ wifi-ap/
 ├── 41-channel-scan.sh           # 运维：周边信道占用扫描
 ├── 42-auto-channel.sh           # 运维：按实测选出可用信道/带宽白名单
 ├── 50-adb-link.sh               # 运维：adb over WiFi 链路质量实测
+├── 60-watchdog.sh               # 运维：驱动 TX 队列卡死检测 + 自动恢复
 ├── run-ap-setup.sh              # 脱离 SSH 会话启动 01-ap-bridge.sh（建桥必断连）
 └── 99-revert.sh                 # 一键回滚基础层
 ```
@@ -172,6 +173,53 @@ sudo bash ~/wifi-ap/10-proxy-gw.sh setup --sub 'https://你的订阅链接'
 
 本机是 **1 天线单流**、单 BSS 共享空口：5G VHT80 单向约 150–200Mbps，**同 AP 内互访约 70–100Mbps**（互访每帧占 2× 空口）。
 客户端建议 ≤ 8–16；嫌慢只能加 USB 网卡（内核已带 `r8188eu / rtl8192cu / rtl8xxxu`）或换硬件。
+
+## 驱动稳定性（UWE5622 已知问题，必读）
+
+本机 `sprdwl_ng` 驱动长时间运行后会 **TX 队列卡死**，实测约 9 小时后复现：
+
+```
+dmesg:
+  sprdwl:tx timeout drop num:0, l_num:31, maxnum:20000
+  sprdwl:TID=BE, timeout!
+  unisoc_wifi wlan0: sprdwl_start_xmit drop msg due to TX Err   ← 之后持续报
+```
+
+**表现**：`hostapd` 仍是 `state=ENABLED`、`iw dev wlan0 info` 仍是 `type AP`，
+但 **beacon 和 probe response 发不出去** → 手机/电脑搜不到 SSID（或能连但极不稳定）。
+
+**为什么重启 hostapd 没用**：卡点在驱动层，`systemctl restart hostapd-br0` 后
+TX Err 会继续增长；`reboot` 或重载驱动模块才能恢复。
+
+**判定方法**（不用猜）：
+
+```bash
+# beacon 是否还在发：5 秒内 tx_packets 应增长约 50（10/s）
+a=$(cat /sys/class/net/wlan0/statistics/tx_packets); sleep 5
+b=$(cat /sys/class/net/wlan0/statistics/tx_packets); echo "+$((b-a)) 包/5s"
+
+# TX 卡死计数（持续增长即可确认）
+dmesg | grep -c 'TX Err'
+```
+
+**自动化：`60-watchdog.sh`**
+
+```bash
+sudo bash ~/wifi-ap/60-watchdog.sh install     # 装 systemd timer（每 5 分钟自检）
+sudo bash ~/wifi-ap/60-watchdog.sh status      # 看最近判定 / 历史动作
+```
+
+判定条件（连续 2 次确认才动作，默认冷却 30 分钟）：
+
+| 指标 | 阈值 | 说明 |
+|---|---|---|
+| `tx_packets` 增速 | < 5/s | 正常 beacon 为 10/s |
+| `TX Err` 单周期新增 | > 3 | 驱动 TX 路径报错 |
+| `hostapd` state | 非 `ENABLED` | 服务层异常 |
+
+恢复阶梯：先 `restart hostapd-br0` 并复测；仍异常则重启整机（`REBOOT_ON_FAIL=0` 只告警不重启）。
+
+其他缓解：定时重启（每天凌晨）、或把 AP 降到 HT40 降低 TX 压力。
 
 ## 阶段 2：虚拟局域网（暂缓）
 
