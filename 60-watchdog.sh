@@ -283,7 +283,7 @@ EOF
 
   systemctl daemon-reload
   systemctl enable --now wifi-ap-watchdog.timer >/dev/null 2>&1
-  log "已安装：timer 每 ${INTERVAL}s 自检，TXErr>${MAX_TXERR} 且 tx<${MIN_TXP_RATIO}/s 连续 2 次触发恢复，冷却 ${COOLDOWN}s，REBOOT_ON_FAIL=${REBOOT_ON_FAIL}"
+  log "已安装：timer 每 ${INTERVAL}s 自检；硬信号（hostapd 非 ENABLED / 非 AP / tx_packets<${MIN_TXP_RATIO}/s）连续 2 次触发恢复，冷却 ${COOLDOWN}s，REBOOT_ON_FAIL=${REBOOT_ON_FAIL}"
   say "✅ 已安装并启动 wifi-ap-watchdog.timer"
   say "  脚本位置: $INSTALL_PATH"
   say "  检查间隔: ${INTERVAL}s   冷却: ${COOLDOWN}s   失败后重启整机: ${REBOOT_ON_FAIL}"
