@@ -43,11 +43,20 @@ LOG_MAX=1048576   # 1MB 截断
 ACTION=${1:-check}
 [[ $EUID -eq 0 ]] || { echo "请用: sudo bash $0 $ACTION"; exit 1; }
 
-log(){ printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; logger -t wifi-ap-watchdog "$*" 2>/dev/null || true; }
+log(){ ensure_log; printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG" 2>/dev/null; logger -t wifi-ap-watchdog "$*" 2>/dev/null || true; }
 say(){ printf '%s\n' "$*"; }
 
+# /var/log 在部分 Orange Pi 镜像上是 zram（orangepi-ramlog），
+# 开机早期可能尚未就绪；先确保文件可写，避免日志写入报错。
+ensure_log(){
+  if [[ ! -w $LOG ]]; then
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+    : > "$LOG" 2>/dev/null || true
+  fi
+}
+
 # ---------------------------------------------------------------- 状态
-LAST_TXERR=0; LAST_TXP=0; LAST_TS=0; LAST_ACTION=0; BAD_STREAK=0
+LAST_TXERR=0; LAST_TXP=0; LAST_TS=0; LAST_ACTION=0; BAD_STREAK=0; INIT=0
 load_state(){
   # shellcheck disable=SC1090
   [[ -r $STATE ]] && source "$STATE" 2>/dev/null
@@ -85,10 +94,23 @@ evaluate(){
   txp=$(metric_txp)
   state=$(metric_state)
 
-  # dmesg 环形缓冲轮转 → 计数会变小，重置基线避免误判
+  # dmesg 环形缓冲轮转 / 驱动重置 → 计数会变小，重置基线避免误判
   [[ ${txerr:-0} -lt $LAST_TXERR ]] && LAST_TXERR=0
+  [[ ${txp:-0} -lt $LAST_TXP ]] && LAST_TXP=0
+
+  # 首次运行（或 state 被清）：只建基线，不下判断
+  if [[ $LAST_TS -eq 0 ]]; then
+    CUR_TXERR=$txerr; CUR_TXP=$txp; CUR_NOW=$now
+    CUR_PER_SEC=0; CUR_STA=$(metric_sta)
+    INIT=1
+    return 0
+  fi
+  INIT=0
+
   delta_t=$(( now - LAST_TS ))
   [[ $delta_t -lt 1 ]] && delta_t=$INTERVAL
+  # 长期未跑（timer 被停过）时，按一个周期估算，避免增速被稀释成 0
+  [[ $delta_t -gt $(( INTERVAL * 3 )) ]] && delta_t=$INTERVAL
   per_sec=$(( (txp - LAST_TXP) / delta_t ))
 
   [[ $state == ENABLED ]] || REASONS+=("hostapd state=${state:-未知}")
@@ -144,8 +166,14 @@ recover(){
 
 # ---------------------------------------------------------------- 子命令
 do_check(){
+  ensure_log
   rotate_log
   if evaluate; then
+    if [[ ${INIT:-0} -eq 1 ]]; then
+      save_state "$CUR_TXERR" "$CUR_TXP" "$CUR_NOW" "$LAST_ACTION" 0
+      say "首次运行，已记录基线（TX Err=$CUR_TXERR, tx_packets=$CUR_TXP），下个周期开始判定"
+      exit 0
+    fi
     # 健康：清零连续异常计数
     if [[ $BAD_STREAK -ne 0 ]]; then
       log "恢复正常（此前连续异常 $BAD_STREAK 次）"
@@ -174,6 +202,7 @@ do_check(){
 }
 
 do_status(){
+  ensure_log
   echo "===== 计时器 ====="
   systemctl is-enabled wifi-ap-watchdog.timer 2>/dev/null || echo "未安装"
   systemctl is-active wifi-ap-watchdog.timer 2>/dev/null || true
@@ -193,13 +222,15 @@ do_status(){
   echo
   echo "===== 实时判定 ====="
   load_state
-  local saved=$LAST_TXERR
   if evaluate; then
-    echo "  ✅ 当前健康"
+    if [[ ${INIT:-0} -eq 1 ]]; then
+      echo "  ℹ️  还没有基线，下次 check（或 timer 首次运行）会建基线"
+    else
+      echo "  ✅ 当前健康"
+    fi
   else
     echo "  ⚠️  当前异常：$(IFS='；'; echo "${REASONS[*]}")"
   fi
-  LAST_TXERR=$saved
   show_metrics
   echo
   echo "===== 最近日志 ====="
@@ -207,6 +238,7 @@ do_status(){
 }
 
 do_install(){
+  ensure_log
   install -d -m 755 /usr/local/lib/wifi-ap
   install -m 755 "$SELF" "$INSTALL_PATH"
   install -m 644 /dev/null "$LOG" 2>/dev/null || : > "$LOG"
@@ -221,6 +253,7 @@ Wants=network-online.target
 Type=oneshot
 Environment=INTERVAL=$INTERVAL MAX_TXERR=$MAX_TXERR MIN_TXP_RATIO=$MIN_TXP_RATIO COOLDOWN=$COOLDOWN REBOOT_ON_FAIL=$REBOOT_ON_FAIL
 ExecStart=/bin/bash $INSTALL_PATH check
+SuccessExitStatus=1
 TimeoutStartSec=180
 EOF
 
