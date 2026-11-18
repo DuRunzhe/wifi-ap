@@ -102,6 +102,9 @@ sudo bash 43-ssid-visibility.sh --switch 2g   # 最兼容：2.4G ch6 + HT20
 ```
 
 常见顺序（实测）：
+0. **「时有时无」** → 先看空载 beacon 速率：`sudo bash 44-firmware-powersave.sh check`。
+   `sprdwl_ng` 固件默认省电会把 beacon 压到 ~0.4/s（正常 10/s），手机每信道只停 100ms，
+   命中率约 4%，表现就是偶尔出现。`fix` 后 tx 直接回到 100+/s。
 1. **5.8G（ch149~165）部分手机扫不到** → 切 2.4G 立刻可见
 2. 2.4G 仍不行 → 降带宽 `--switch 2g 6 20`（HT40+ 在个别固件下不出 SSID）
 3. 两个频段都不行、且 `iw scan` 连邻居 AP 都扫不到 → **天线/射频**（IPEX 未扣好/接触不良），

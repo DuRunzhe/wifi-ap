@@ -22,6 +22,7 @@ wifi-ap/
 ├── 41-channel-scan.sh           # 运维：周边信道占用扫描（AP 运行时会警告/可 --stop-ap）
 ├── 42-auto-channel.sh           # 运维：按实测选出可用信道/带宽白名单
 ├── 43-ssid-visibility.sh        # 排障：手机/电脑「搜不到 SSID」的排查阶梯 + 一键切 2.4G/5G
+├── 44-firmware-powersave.sh     # 排障：固件省电压低 beacon 导致「时有时无」→ check/fix/revert
 ├── 50-adb-link.sh               # 运维：adb over WiFi 链路质量实测
 ├── 60-watchdog.sh               # 运维：驱动异常检测（TX 卡死 / 固件失联）+ 自动恢复
 ├── run-ap-setup.sh              # 脱离 SSH 会话启动 01-ap-bridge.sh（建桥必断连）
@@ -54,9 +55,16 @@ wifi-ap/
 | 5G 可用信道 | ch149~165 | ch149~165（**ch36/44/48 固件不支持**，会报 `Could not select hw_mode and channel`） |
 | **5.8G 客户端兼容性** | 部分设备扫不到 | 同（实测某手机在 2.4G 能连、5G ch149 完全搜不到） |
 | 2.4G HT40 | 可用 | 建议 HT20（`43-ssid-visibility.sh --switch 2g` 默认就是 HT20） |
+| **空载 beacon** | ≈10/s（正常） | **默认仅 ≈0.4/s** → 手机时有时无，需 `44-firmware-powersave.sh fix`（关固件省电） |
 | 默认建议 | 5G ch149 / VHT80 | 兼容优先时用 **2.4G ch6 / HT20** |
 
-> **客户端搜不到 SSID 时的第一件事**：
+> **客户端「时有时无」时的第一件事**（Zero3 实测踩过）：
+> ```bash
+> sudo bash 44-firmware-powersave.sh check   # 看空载 tx_packets/s，<3 就是固件省电压 beacon
+> sudo bash 44-firmware-powersave.sh fix     # 关固件省电并持久化
+> ```
+>
+> **客户端搜不到 SSID 时**：
 > ```bash
 > sudo bash 43-ssid-visibility.sh              # 诊断（会临时停 AP 扫一眼周边）
 > sudo bash 43-ssid-visibility.sh --switch 2g  # 切 2.4G ch6 / HT20（最兼容）

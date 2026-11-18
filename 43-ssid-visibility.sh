@@ -182,6 +182,7 @@ diagnose() {
   else
     echo "  ① 当前在 2.4G ch$ch：兼容性最好，若仍搜不到见 ③"
   fi
+  echo "  ①.5 「时有时无」→ 先查固件省电：sudo bash 44-firmware-powersave.sh check"
   echo "  ② 2.4G 仍然不行 → 降带宽：  sudo bash $0 --switch 2g 6 20"
   echo "  ③ 两个频段都搜不到 → 几乎确定是天线/射频：检查 IPEX 天线、换天线、贴近 10cm 试"
   echo "  ④ 客户端能连但上不了网 → 看桥转发：sudo bash 01-verify-intrabss.sh"
