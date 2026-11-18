@@ -9,9 +9,9 @@
 ```
 wifi-ap/
 ├── 00-prepare.sh                # 阶段0.5：固定地址 + 开机自动运行（重启后仍生效）
-├── 00-cleanup-openwrt.sh        # 阶段-1：清掉 openwrt 容器 + parent=eth0 的 macvlan（建桥前置）
+├── 00-cleanup-openwrt.sh        # 阶段-1：清掉 openwrt 容器 + parent=上行网卡 的 macvlan（建桥前置）
 ├── 01-ap-bridge.sh              # 阶段0：桥接 AP —— 同一内网 + 外网 + 统一 WiFi 入口（核心，常开）
-├── 01-verify-intrabss.sh        # 阶段0验收：证明同 AP 互访没走 eth0（不跨主路由）
+├── 01-verify-intrabss.sh        # 阶段0验收：证明同 AP 互访没走有线（不跨主路由）
 ├── 02-proxy.md                  # 阶段1：代理方案设计 + 三条可行路线 + 独立性验收
 ├── 03-single-ap.md              # 需求3设计：为什么独立 SSID 是关键 / 物理上限 / 排查阶梯
 ├── 10-proxy-gw.sh               # 阶段1：按需网关 + TPROXY 透明代理（setup/off/full-off/status）
@@ -19,10 +19,10 @@ wifi-ap/
 ├── 20-tailscale.sh              # 阶段2：虚拟局域网（本次先不做）
 ├── 30-router-changed.sh         # 换主路由/换网段后的一键适配
 ├── 40-latency.sh                # 运维：无线一跳延时/抖动/丢包体检
-├── 41-channel-scan.sh           # 运维：周边信道占用扫描
+├── 41-channel-scan.sh           # 运维：周边信道占用扫描（AP 运行时会警告/可 --stop-ap）
 ├── 42-auto-channel.sh           # 运维：按实测选出可用信道/带宽白名单
 ├── 50-adb-link.sh               # 运维：adb over WiFi 链路质量实测
-├── 60-watchdog.sh               # 运维：驱动 TX 队列卡死检测 + 自动恢复
+├── 60-watchdog.sh               # 运维：驱动异常检测（TX 卡死 / 固件失联）+ 自动恢复
 ├── run-ap-setup.sh              # 脱离 SSH 会话启动 01-ap-bridge.sh（建桥必断连）
 └── 99-revert.sh                 # 一键回滚基础层
 ```
@@ -35,7 +35,8 @@ wifi-ap/
 | **只能开 1 个 AP** | `valid interface combinations: #{ managed, AP } <= 1` → 双 SSID 在本硬件上不可行 |
 | hostapd | 已装 2.9，但 `/etc/default/hostapd` 没有 `DAEMON_CONF` → 服务"启动"了其实没跑 |
 | 旧配置 bug | `/etc/hostapd.conf` 里是 `interface=p2p-dev-wlan0`（P2P 口，不能做 AP）→ 本方案另写配置，不动它 |
-| 有线 | `eth0` 由主路由 DHCP 分配，与 WiFi 客户端同网段，NetworkManager 管理 |
+| 有线 | 由主路由 DHCP 分配，与 WiFi 客户端同网段，NetworkManager 管理 |
+| 网卡命名 | 脚本**自动从默认路由探测**上行网卡，兼容 `eth0` / `end0` / `enp1s0`；也可用 `UPLINK=xxx` 覆盖 |
 | 代理能力 | `iptables 1.8.7(nft) + xt_TPROXY + xt_REDIRECT` 齐备，GitHub 可达 |
 | 内核模块 | `tun` 已加载，`wireguard=m`；USB 无线网卡可用 `r8188eu / rtl8192cu / rtl8xxxu` |
 
@@ -174,6 +175,65 @@ sudo bash ~/wifi-ap/10-proxy-gw.sh setup --sub 'https://你的订阅链接'
 本机是 **1 天线单流**、单 BSS 共享空口：5G VHT80 单向约 150–200Mbps，**同 AP 内互访约 70–100Mbps**（互访每帧占 2× 空口）。
 客户端建议 ≤ 8–16；嫌慢只能加 USB 网卡（内核已带 `r8188eu / rtl8192cu / rtl8xxxu`）或换硬件。
 
+## AP 起来了但设备连不上？按这个顺序排查
+
+顺序按「实测命中率」排列，先看日志能省很多时间：
+
+```bash
+tail -f /var/log/hostapd-br0.log      # 一边排查一边看
+iw dev wlan0 info                     # 应有 ssid / type AP / channel
+```
+
+### 1. 手机/电脑搜不到 SSID
+
+**首先怀疑频段**。5GHz 信道 149 属于 **5.8G 频段（UNII-3）**，部分设备（老手机、
+部分网卡、某些地区固件）扫不到；VHT80 的 80MHz 带宽要求也会劝退一批设备。
+
+```bash
+# 临时降到 2.4G ch6（兼容性最好）验证
+sudo sed -i 's/^hw_mode=.*/hw_mode=g/; s/^channel=.*/channel=6/' /etc/hostapd/hostapd-br0.conf
+sudo sed -i '/^ieee80211ac=/d; /^vht_oper/d' /etc/hostapd/hostapd-br0.conf
+sudo systemctl restart hostapd-br0
+```
+
+2.4G 能搜到就说明是频段问题。家用场景建议直接用 2.4G（穿墙好、兼容所有设备）。
+
+### 2. 能搜到但连不上 / 反复提示密码错误
+
+日志里如果刷这几行：
+
+```
+wlan0: AP-STA-POSSIBLE-PSK-MISMATCH <MAC>
+wlan0: STA <MAC> IEEE 802.11: disassociated
+```
+
+这是 **4 次握手 PSK 不匹配**，99% 是设备端保存了旧的（错误）密码记录，每次自动重连都用旧凭据：
+
+1. 在设备上**「忘记此网络 / 删除网络」**
+2. 再重新连接（扫码最省事）
+
+```bash
+# 生成连接二维码
+qrencode -t ANSIUTF8 "WIFI:T:WPA;S:<SSID>;P:<密码>;;"
+```
+
+### 3. 连上了但没网 / 拿不到 IP
+
+WiFi 客户端 IP 由**主路由 DHCP** 分配（桥接模式）。排查：
+
+```bash
+ip neigh show dev br0            # 看客户端是否从主路由拿到了地址
+brctl show br0                   # wlan0 必须在 br0 里
+ip -4 addr show br0              # br0 自身有地址
+ping -c3 <主路由网关>            # br0 到主路由是否通
+```
+
+`brctl show br0` 里**看不到 wlan0** 是最常见问题：`nmcli con up br0` 重建桥时
+会把 wlan0 挤出去，`systemctl restart hostapd-br0` 即可让它重新入桥。
+
+若主路由 DHCP 池耗尽或设了 MAC 白名单，客户端就拿不到地址（此场景主路由不可操作时无解，
+只能改用 NAT 模式）。
+
 ## 驱动稳定性（UWE5622 已知问题，必读）
 
 本机 `sprdwl_ng` 驱动长时间运行后会 **TX 队列卡死**，实测约 9 小时后复现：
@@ -189,7 +249,11 @@ dmesg:
 但 **beacon 和 probe response 发不出去** → 手机/电脑搜不到 SSID（或能连但极不稳定）。
 
 **为什么重启 hostapd 没用**：卡点在驱动层，`systemctl restart hostapd-br0` 后
-TX Err 会继续增长；`reboot` 或重载驱动模块才能恢复。
+TX Err 会继续增长；需要**重载驱动模块**（`rmmod sprdwl_ng && modprobe sprdwl_ng`）才能恢复。
+
+> ⚠️ **`reboot` 前先确认本板软重启是否安全**。单板 实测 `systemctl reboot`
+> 会黑屏无输出、网络不通，必须**断电冷启动**。这类板子上不要把「重启整机」当作恢复手段，
+> 否则会把「WiFi 不可用」升级成「整机失联、只能人工断电」。
 
 **判定方法**（不用猜）：
 
@@ -214,12 +278,43 @@ sudo bash ~/wifi-ap/60-watchdog.sh status      # 看最近判定 / 历史动作
 | 指标 | 阈值 | 说明 |
 |---|---|---|
 | `tx_packets` 增速 | < 5/s | 正常 beacon 为 10/s |
-| `TX Err` 单周期新增 | > 3 | 驱动 TX 路径报错 |
 | `hostapd` state | 非 `ENABLED` | 服务层异常 |
+| `wlan0` 模式 | 非 `type AP` | 接口被重置 |
+| 驱动报错单周期新增 | > 3 | `TX Err` / `beacon failed` / `start_ap failed` / `SYNC CMD ERROR` / `SYNC_VERSION]timeout` |
 
-恢复阶梯：先 `restart hostapd-br0` 并复测；仍异常则重启整机（`REBOOT_ON_FAIL=0` 只告警不重启）。
+恢复阶梯：`restart hostapd-br0` 并复测 → 仍异常则**重载驱动模块** → 仍异常则写告警并通知
+（`REBOOT_ON_FAIL` **默认 0**；软重启不安全的板子请保持 0，见下方说明）。
 
-其他缓解：定时重启（每天凌晨）、或把 AP 降到 HT40 降低 TX 压力。
+其他缓解：定时重载驱动、或把 AP 降到 HT40 降低 TX 压力。
+
+### 🔴 不要改 CPU governor / 限制 max_freq（实测会把 WiFi 打挂）
+
+`sprdwl_ng` 走 **SDIO** 总线，对 CPU/SDIO 时钟分频很敏感。实测把 governor 从
+`ondemand` 换成 `schedutil`、频率从 1512MHz 降到 1200MHz 后**立即**出现：
+
+```
+unisoc_wifi wlan0: sprdwl_change_beacon failed
+unisoc_wifi wlan0: sprdwl_cfg80211_start_ap failed to start AP!
+sprdwl:[WIFI_CMD_SYNC_VERSION]timeout
+sprdwl:SYNC CMD ERROR!!
+```
+
+后果：AP 再也起不来，`rmmod`/`modprobe` 重载驱动也救不回（固件侧已失联），
+**只能断电冷启动**。
+
+结论：
+
+- 保持 Armbian 默认 `ondemand`（480–1512MHz），不要为了降温改 governor
+- 降温请走硬件路线（加散热片），不要牺牲 CPU 频率
+- `/sys/devices/platform/unisoc_wifi/power/control` 的 `runtime_status` 为 `unsupported`，
+  不支持 runtime PM，**不要往里写值**
+
+检查当前是否符合：
+
+```bash
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor   # 期望 ondemand
+cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq   # 期望 1512000
+```
 
 ## 阶段 2：虚拟局域网（暂缓）
 
@@ -257,7 +352,9 @@ sudo bash ~/wifi-ap/30-router-changed.sh             # 执行
 0. `00-cleanup-openwrt.sh --backup` → 清掉 openwrt 容器与 `parent=eth0` 的 macvlan（否则 `br0` 无法组装）
 1. `01-ap-bridge.sh` → 手机连上、拿到主路由网段的地址、能上网（基础层验收）
 2. `00-prepare.sh setup` → 固定地址 + 开机自启（**必须做**）
-3. `sudo reboot` → 重启后 `00-prepare.sh status` 全绿、手机自动重连（验证自动配置）
+3. 重启验证 → 重启后 `00-prepare.sh status` 全绿、手机自动重连
+   - 普通板子：`sudo reboot`
+   - **软重启会黑屏的板子（如 单板）：`sudo poweroff` 后拔电源、等 10 秒再上电**
 4. `10-proxy-gw.sh setup --sub ...` → 只让一台设备改网关试代理（进阶1 验收）
 5. 两边分别 `off` / `on` 各测一次，确认互不影响
 6. 满意后再考虑实验性全自动劫持、或加 USB 网卡做真隔离
