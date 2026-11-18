@@ -23,7 +23,18 @@ set -uo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 C=openwrt
-PARENT=${PARENT:-eth0}
+# 探测上行网卡：默认路由所在接口；若路由在桥上，则取该桥的第一个物理 port
+_detect_uplink(){
+  local d
+  d=$(ip route show default 2>/dev/null | awk '{print $5}' | grep -vE '^(veth|docker|virbr|tun|tap|wg)' | head -1)
+  if [[ ${d:-} == br* && -d /sys/class/net/$d/brif ]]; then
+    ls /sys/class/net/$d/brif 2>/dev/null | grep -vE '^(veth|tap|tun|wg|wlan|p2p)' | head -1
+  else
+    printf '%s' "${d:-}"
+  fi
+}
+PARENT=${PARENT:-$(_detect_uplink)}
+[[ -n $PARENT ]] || { echo "无法自动探测上行网卡，请用 PARENT=<网卡名> 指定" >&2; exit 1; }
 BR=${BR:-br0}
 BACKUP=0
 [[ "${1:-}" == "--backup" ]] && BACKUP=1

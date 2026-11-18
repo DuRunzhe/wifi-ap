@@ -18,7 +18,22 @@ set -euo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 LAN=br0
-WAN=eth0
+# 探测上行网卡：默认路由所在接口；若路由在桥上，则取该桥的第一个物理 port
+# （兼容 eth0 / end0 / enp1s0；排除 br/veth/docker/tun/wlan 等虚拟或无线接口）
+_detect_uplink(){
+  local d
+  d=$(ip route show default 2>/dev/null | awk '{print $5}' | grep -vE '^(veth|docker|virbr|tun|tap|wg)' | head -1)
+  if [[ ${d:-} == br* && -d /sys/class/net/$d/brif ]]; then
+    ls /sys/class/net/$d/brif 2>/dev/null | grep -vE '^(veth|tap|tun|wg|wlan|p2p)' | head -1
+  else
+    printf '%s' "${d:-}"
+  fi
+}
+WAN=${WAN:-$(_detect_uplink)}
+if [[ -z $WAN ]]; then
+  echo "无法自动探测上行网卡（默认路由缺失），请用 WAN=<网卡名> 显式指定" >&2
+  exit 1
+fi
 # 留空则自动从当前默认路由推导（换主路由/换网段后不用改脚本）
 NET=${NET:-}
 LOCAL_IP=${LOCAL_IP:-}
