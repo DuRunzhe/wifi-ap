@@ -78,10 +78,15 @@ apply() {
     else
       echo "hw_mode=a"; echo "channel=$ch"
       echo "ieee80211d=0"; echo "ieee80211n=1"
-      echo "ht_capab=[SHORT-GI-20][SHORT-GI-40][HT40+]"
       if [[ "$w" == 80 ]]; then
+        echo "ht_capab=[SHORT-GI-20][SHORT-GI-40][HT40+]"
         echo "ieee80211ac=1"; echo "vht_oper_chwidth=1"
         echo "vht_oper_centr_freq_seg0_idx=$((ch + 6))"
+      elif [[ "$w" == 40 ]]; then
+        echo "ht_capab=[SHORT-GI-20][SHORT-GI-40][HT40+]"
+      else
+        # 20MHz：不要声明 HT40 能力，否则 hostapd 仍会按 40MHz 起
+        echo "ht_capab=[SHORT-GI-20]"
       fi
     fi
     echo
