@@ -21,6 +21,7 @@ wifi-ap/
 ├── 40-latency.sh                # 运维：无线一跳延时/抖动/丢包体检
 ├── 41-channel-scan.sh           # 运维：周边信道占用扫描（AP 运行时会警告/可 --stop-ap）
 ├── 42-auto-channel.sh           # 运维：按实测选出可用信道/带宽白名单
+├── 43-ssid-visibility.sh        # 排障：手机/电脑「搜不到 SSID」的排查阶梯 + 一键切 2.4G/5G
 ├── 50-adb-link.sh               # 运维：adb over WiFi 链路质量实测
 ├── 60-watchdog.sh               # 运维：驱动异常检测（TX 卡死 / 固件失联）+ 自动恢复
 ├── run-ap-setup.sh              # 脱离 SSH 会话启动 01-ap-bridge.sh（建桥必断连）
@@ -39,6 +40,27 @@ wifi-ap/
 | 网卡命名 | 脚本**自动从默认路由探测**上行网卡，兼容 `eth0` / `end0` / `enp1s0`；也可用 `UPLINK=xxx` 覆盖 |
 | 代理能力 | `iptables 1.8.7(nft) + xt_TPROXY + xt_REDIRECT` 齐备，GitHub 可达 |
 | 内核模块 | `tun` 已加载，`wireguard=m`；USB 无线网卡可用 `r8188eu / rtl8192cu / rtl8xxxu` |
+
+## 设备兼容性（同一套脚本，多板实测差异）
+
+脚本本身不绑板型，但不同 SoC/固件组合的**行为差异**必须知道：
+
+| 项 | Orange Pi Zero 2 (H616) | Orange Pi Zero 3 (H618, 1GB) |
+|---|---|---|
+| 无线 | AW859A / UWE5622，驱动 `sprdwl_ng` | 同一颗芯片、同一驱动 |
+| 上行网卡 | `end0`（脚本自动探测） | `end0` |
+| **软重启** | **必黑屏**，只能 `poweroff` + 拔电 | **正常**（实测 27s 回网，可放心 reboot 验证） |
+| **空载 tx_packets** | ≈10/s | **≈1/s**（同一套 60-watchdog 已改为「仅在有客户端时按 tx 判活」，两者都适用） |
+| 5G 可用信道 | ch149~165 | ch149~165（**ch36/44/48 固件不支持**，会报 `Could not select hw_mode and channel`） |
+| **5.8G 客户端兼容性** | 部分设备扫不到 | 同（实测某手机在 2.4G 能连、5G ch149 完全搜不到） |
+| 2.4G HT40 | 可用 | 建议 HT20（`43-ssid-visibility.sh --switch 2g` 默认就是 HT20） |
+| 默认建议 | 5G ch149 / VHT80 | 兼容优先时用 **2.4G ch6 / HT20** |
+
+> **客户端搜不到 SSID 时的第一件事**：
+> ```bash
+> sudo bash 43-ssid-visibility.sh              # 诊断（会临时停 AP 扫一眼周边）
+> sudo bash 43-ssid-visibility.sh --switch 2g  # 切 2.4G ch6 / HT20（最兼容）
+> ```
 
 ## WiFi 连接信息（关键）
 

@@ -207,7 +207,10 @@ EOF
 # ---------------------------------------------------------------- 生成配置
 # gen_conf <2g|5g> <channel> <1=VHT80|0=HT>
 gen_conf() {
-  local band=$1 ch=$2 ac=$3 hw ht vht=""
+  # 第4参数可选：ht20 = 强制 20MHz（不写 HT40 能力）
+  # 背景：部分驱动/固件（如 Zero3 的 sprdwl_ng + AW859A）在 2.4G HT40+ 下
+  #       会被某些手机/驱动判定为不可用或不显示 SSID，降到 HT20 立刻正常。
+  local band=$1 ch=$2 ac=$3 mode=${4:-} hw ht vht=""
   if [[ "$band" == 5g ]]; then hw=a; else hw=g; fi
   if [[ "$band" == 5g && "$ac" == 1 ]]; then
     ht='[SHORT-GI-20][SHORT-GI-40][HT40+]'
@@ -219,7 +222,12 @@ vht_oper_centr_freq_seg0_idx=$((ch + 6))"
   elif [[ "$band" == 5g ]]; then
     ht='[SHORT-GI-20][SHORT-GI-40][HT40+]'
   else
-    ht='[SHORT-GI-20][SHORT-GI-40][HT40+]'
+    # 2.4G：默认保留 HT40+；mode=ht20 或全局 HT40_2G=0 时只发 20MHz
+    if [[ "$mode" == ht20 || "${HT40_2G:-1}" == 0 ]]; then
+      ht='[SHORT-GI-20]'
+    else
+      ht='[SHORT-GI-20][SHORT-GI-40][HT40+]'
+    fi
   fi
 
   mkdir -p /etc/hostapd
@@ -235,7 +243,7 @@ ssid=$SSID
 hw_mode=$hw
 channel=$ch
 country_code=CN
-ieee80211d=1
+ieee80211d=${IEEE80211D:-1}
 max_num_sta=$MAXSTA
 
 ap_isolate=0
@@ -402,15 +410,15 @@ COMBOS=()
 if [[ "$BAND" == 5g ]]; then
   COMBOS+=("5g:${CH:-149}:1" "5g:${CH:-149}:0" "5g:36:0")
 else
-  COMBOS+=("2g:${CH:-6}:0")
+  COMBOS+=("2g:${CH:-6}:0" "2g:${CH:-6}:0:ht20")
 fi
-COMBOS+=("2g:6:0")     # 最后兜底：2.4G ch6 HT
+COMBOS+=("2g:6:0" "2g:6:0:ht20")   # 最后兜底：2.4G ch6（HT40 → HT20）
 
 OK=0; USED=""
 for combo in "${COMBOS[@]}"; do
-  IFS=':' read -r b c a <<<"$combo"
-  log "尝试 AP 参数: band=$b channel=$c vht=$a"
-  gen_conf "$b" "$c" "$a"
+  IFS=':' read -r b c a m <<<"$combo"
+  log "尝试 AP 参数: band=$b channel=$c vht=$a${m:+ ht20}"
+  gen_conf "$b" "$c" "$a" "${m:-}"
   if try_start; then OK=1; USED="$combo"; break; fi
   warn "参数 $combo 起不来"
   tail -6 "$APLOG" 2>/dev/null | sed 's/^/    /'
