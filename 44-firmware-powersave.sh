@@ -11,6 +11,11 @@
 #   sprdwl_ng（Unisoc UWE5622）固件默认开启 power save，进入省电后会把
 #   beacon 发送频率压到极低。关掉固件的 power save 后 tx 立刻回到 100+/s。
 #
+# 修复分两层（都要做）：
+#   ① 模块参数 disable_powersave=1 —— 运行期生效，但固件只在「下一次 power-down 请求」采纳
+#   ② 固件 ini 的 power_save_switch = 0 —— 启动时读取，彻底阻止进入省电（需重启）
+#   只用 ① 时，重启后仍可能复现（实测）
+#
 # 适用范围：
 #   只对带 disable_powersave 参数的驱动有效（sprdwl_ng）。其它驱动会明确提示不适用。
 #
@@ -27,6 +32,14 @@ MODULE=${MODULE:-sprdwl_ng}
 PARAM=/sys/module/$MODULE/parameters/disable_powersave
 MODCONF=/etc/modprobe.d/sprdwl_ng-no-powersave.conf
 UNIT=wifi-no-powersave.service
+INI_BAK=/root/wifi-ini-power-save.bak
+
+find_ini(){          # 从 dmesg 抓实际加载的 ini，退回 glob
+  local p
+  p=$(dmesg 2>/dev/null | sed -n 's/.*wifi ini path = //p' | tail -1)
+  [[ -n "$p" && -f "$p" ]] && { echo "$p"; return; }
+  ls /lib/firmware/wifi_*.ini 2>/dev/null | head -1
+}
 ACTION=${1:-check}
 
 [[ $EUID -eq 0 ]] || { echo "请用 sudo 运行" >&2; exit 1; }
@@ -64,6 +77,15 @@ check() {
     echo "     修复：sudo bash $0 fix"
   fi
 
+  echo "== 固件 ini（power_save_switch）"
+  local ini; ini=$(find_ini)
+  if [[ -n "$ini" ]]; then
+    info "ini 文件" "$ini"
+    info "power_save_switch" "$(sed -n 's/^power_save_switch *= *//p' "$ini" | head -1)（0=关省电，重启生效）"
+  else
+    info "ini 文件" "未找到（跳过）"
+  fi
+
   echo "== 持久化状态"
   [[ -f "$MODCONF" ]] && info "modprobe.d" "已配置" || info "modprobe.d" "未配置"
   systemctl is-enabled "$UNIT" >/dev/null 2>&1 \
@@ -95,6 +117,17 @@ EOF
   echo 1 > "$PARAM" 2>/dev/null || true
   ok "已启用 $UNIT 并写入参数=1（立即生效）"
 
+  # ② 固件 ini：power_save_switch = 0（启动时读取，需重启）
+  local ini; ini=$(find_ini)
+  if [[ -n "$ini" ]]; then
+    [[ -f "$INI_BAK" ]] || cp -a "$ini" "$INI_BAK"
+    sed -i 's/^power_save_switch *= *.*/power_save_switch = 0/' "$ini"
+    ok "已把 $(basename "$ini") 的 power_save_switch 设为 0（备份 $INI_BAK）"
+    echo "     ⚠️ 该项需【重启】才彻底生效；重启后跑 '$0 check' 复核"
+  else
+    echo "  ⚠️  未找到 wifi ini，跳过第 ② 步"
+  fi
+
   sleep 3
   local rate; rate=$(measure)
   info "修复后 tx_packets/s" "$rate"
@@ -110,6 +143,11 @@ revert() {
   rm -f "/etc/systemd/system/$UNIT" "$MODCONF"
   systemctl daemon-reload
   echo 0 > "$PARAM" 2>/dev/null || true
+  if [[ -f "$INI_BAK" ]]; then
+    local ini; ini=$(find_ini)
+    [[ -n "$ini" ]] && cp -a "$INI_BAK" "$ini" && ok "已恢复固件 ini（重启后生效）"
+    rm -f "$INI_BAK"
+  fi
   ok "已恢复默认（省电开启）。重启后彻底回到出厂默认"
 }
 
