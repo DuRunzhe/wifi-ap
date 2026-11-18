@@ -1,23 +1,55 @@
 #!/usr/bin/env bash
-# 扫描周边 AP 并给信道打分，推荐最优信道（AP 不用停，扫描可在 AP 运行时进行）
+# 扫描周边 AP 并给信道打分，推荐最优信道
+#
+# ⚠️ AP 运行时扫描的副作用（按驱动而异）：
+#   - 多数驱动：扫描会短暂中断 AP，已连客户端可能掉线数秒
+#   - sprdwl_ng（Unisoc UWE5622）：AP 模式下 iw scan 可能直接卡住不返回
+#   因此本脚本在检测到 AP 正在运行时会先警告并请求确认；
+#   想完全避免影响可加 --stop-ap，脚本会临时停 AP、扫完自动拉起。
 #
 # 用法：
 #   sudo bash 41-channel-scan.sh                 # 只扫描 + 推荐
 #   sudo bash 41-channel-scan.sh --apply 36      # 应用到 ch36（自动选 80MHz/@5G）
 #   sudo bash 41-channel-scan.sh --apply 36 40   # 指定带宽 40MHz
+#   sudo bash 41-channel-scan.sh --stop-ap       # 扫描前临时停 AP，扫完自动启动（客户端会短暂掉线）
 set -uo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WIFI=wlan0; UNIT=hostapd-br0; CONF=/etc/hostapd/hostapd-br0.conf
-APPLY=""; WIDTH=""
+APPLY=""; WIDTH=""; STOP_AP=0; ASSUME_YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY="$2"; shift 2; [[ -n "${1:-}" && "$1" != --* ]] && { WIDTH="$1"; shift; } ;;
+    --stop-ap) STOP_AP=1; shift ;;
+    --yes|-y)  ASSUME_YES=1; shift ;;
     *) echo "未知参数 $1"; exit 1 ;;
   esac
 done
 [[ $EUID -eq 0 ]] || { echo "请用 sudo"; exit 1; }
 
-iw dev $WIFI scan 2>/dev/null > /tmp/chscan.txt
+# ---- AP 运行保护：AP 模式下扫描可能中断服务或直接卡住 ----
+if systemctl is-active --quiet "$UNIT" 2>/dev/null; then
+  if [[ $STOP_AP -eq 1 ]]; then
+    echo "临时停止 $UNIT 以便安全扫描…"
+    systemctl stop "$UNIT" >/dev/null 2>&1
+    sleep 2
+    RESTART_AP=1
+  elif [[ $ASSUME_YES -ne 1 ]]; then
+    echo "⚠️  $UNIT 正在运行：AP 模式下扫描会让已连客户端短暂掉线，"
+    echo "    部分驱动（sprdwl_ng）甚至会卡住不返回。"
+    echo "    建议改用 --stop-ap（临时停 AP，扫完自动拉起），或先手动 stop。"
+    read -rp "    仍要继续扫描？[y/N] " _ans
+    [[ ${_ans:-N} =~ ^[Yy]$ ]] || { echo "已取消。"; exit 0; }
+  fi
+fi
+
+iw dev $WIFI scan 2>/dev/null > /tmp/chscan.txt || true
+
+# 若刚才临时停了 AP，扫描结束立即恢复
+if [[ ${RESTART_AP:-0} -eq 1 ]]; then
+  echo "重新启动 $UNIT…"
+  systemctl start "$UNIT" >/dev/null 2>&1
+fi
+
 python3 - "$WIDTH" <<'PY'
 import re, sys, collections
 txt=open('/tmp/chscan.txt',encoding='utf-8',errors='ignore').read()
