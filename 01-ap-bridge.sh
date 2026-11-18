@@ -20,7 +20,22 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 BR=br0
 WIFI=wlan0
-UPLINK=eth0
+# 探测上行网卡：默认路由所在接口；若路由在桥上，则取该桥的第一个物理 port
+# （兼容 eth0 / end0 / enp1s0；排除 br/veth/docker/tun/wlan 等虚拟或无线接口）
+_detect_uplink(){
+  local d
+  d=$(ip route show default 2>/dev/null | awk '{print $5}' | grep -vE '^(veth|docker|virbr|tun|tap|wg)' | head -1)
+  if [[ ${d:-} == br* && -d /sys/class/net/$d/brif ]]; then
+    ls /sys/class/net/$d/brif 2>/dev/null | grep -vE '^(veth|tap|tun|wg|wlan|p2p)' | head -1
+  else
+    printf '%s' "${d:-}"
+  fi
+}
+UPLINK=${UPLINK:-$(_detect_uplink)}
+if [[ -z $UPLINK ]]; then
+  echo "无法自动探测上行网卡（默认路由缺失），请用 UPLINK=<网卡名> 显式指定" >&2
+  exit 1
+fi
 CONF=/etc/hostapd/hostapd-${BR}.conf
 APLOG=/var/log/hostapd-${BR}.log
 UNIT=hostapd-br0
@@ -443,8 +458,13 @@ echo "  改 SSID/密码: sudo bash $(dirname "$0")/00-prepare.sh set-wifi --ssid
 echo "  随时查看    : sudo bash $(dirname "$0")/00-prepare.sh show"
 echo
 if [[ ! -f /etc/NetworkManager/conf.d/99-unmanaged-wlan0.conf ]]; then
-  printf '\033[1;33m[!]\033[0m 还差「重启后自动生效」，请紧接着执行：\n'
-  echo "      sudo bash $(dirname "$0")/00-prepare.sh setup"
+  printf '\033[1;33m[!]\033[0m 检测到尚未做持久化：重启后 NetworkManager 会抢走 %s，AP 直接消失。\n' "$WIFI"
+  printf '\033[1;33m[!]\033[0m 现在自动执行 00-prepare.sh setup（固定地址 + %s 永久 unmanaged）…\n' "$WIFI"
+  if bash "$(dirname "$0")/00-prepare.sh" setup; then
+    printf '\033[1;32m[OK]\033[0m 持久化完成，重启后 AP 会自动恢复。\n'
+  else
+    printf '\033[1;31m[!]\033[0m 持久化失败，请手动执行： sudo bash %s/00-prepare.sh setup\n' "$(dirname "$0")"
+  fi
   echo
 fi
 echo "  局域网互访（本机内转发，不经过主路由的任何 AP）自测："

@@ -51,7 +51,7 @@ if command -v systemd-run >/dev/null 2>&1; then
   echo "   跟踪: tail -f $LOG"
   echo "   或:   journalctl -u ap-setup -f"
   echo
-  echo "   连接断开是正常的（eth0 被移进 br0），40~60 秒后重连，IP 由主路由重新分配，可能变化"
+  echo "   连接断开是正常的（上行网卡被移进 br0），40~60 秒后重连，IP 由主路由重新分配，可能变化"
 else
   setsid nohup env SSID="$SSID" PASS="$PASS" BAND="$BAND" CH="${CH:-149}" \
       /bin/bash "$SCRIPT" >>"$LOG" 2>&1 </dev/null &

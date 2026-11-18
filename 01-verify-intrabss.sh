@@ -15,7 +15,22 @@ B=${2:?需要 B 的 IP}
 SECS=${3:-20}
 BR=br0
 WIFI=wlan0
-UPLINK=eth0
+# 探测上行网卡：默认路由所在接口；若路由在桥上，则取该桥的第一个物理 port
+# （兼容 eth0 / end0 / enp1s0；排除 br/veth/docker/tun/wlan 等虚拟或无线接口）
+_detect_uplink(){
+  local d
+  d=$(ip route show default 2>/dev/null | awk '{print $5}' | grep -vE '^(veth|docker|virbr|tun|tap|wg)' | head -1)
+  if [[ ${d:-} == br* && -d /sys/class/net/$d/brif ]]; then
+    ls /sys/class/net/$d/brif 2>/dev/null | grep -vE '^(veth|tap|tun|wg|wlan|p2p)' | head -1
+  else
+    printf '%s' "${d:-}"
+  fi
+}
+UPLINK=${UPLINK:-$(_detect_uplink)}
+if [[ -z $UPLINK ]]; then
+  echo "无法自动探测上行网卡（默认路由缺失），请用 UPLINK=<网卡名> 显式指定" >&2
+  exit 1
+fi
 
 [[ $EUID -eq 0 ]] || { echo "请用: sudo bash $0 <A-IP> <B-IP> [秒]"; exit 1; }
 log(){ printf '\033[1;36m[%s]\033[0m %s\n' "$(date +%H:%M:%S)" "$*"; }

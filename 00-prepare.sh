@@ -20,6 +20,18 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 BR=br0
 WIFI=wlan0
 CONF=/etc/hostapd/hostapd-${BR}.conf
+# 探测上行网卡：默认路由所在接口；若路由在桥上，则取该桥的第一个物理 port
+# （兼容 eth0 / end0 / enp1s0；排除 br/veth/docker/tun/wlan 等虚拟或无线接口）
+_detect_uplink(){
+  local d
+  d=$(ip route show default 2>/dev/null | awk '{print $5}' | grep -vE '^(veth|docker|virbr|tun|tap|wg)' | head -1)
+  if [[ ${d:-} == br* && -d /sys/class/net/$d/brif ]]; then
+    ls /sys/class/net/$d/brif 2>/dev/null | grep -vE '^(veth|tap|tun|wg|wlan|p2p)' | head -1
+  else
+    printf '%s' "${d:-}"
+  fi
+}
+UPLINK=${UPLINK:-$(_detect_uplink)}
 FIXED=""
 ACTION=""
 
@@ -213,7 +225,7 @@ do_setup() {
   local cidr base fixed
   base=$(ip -4 -o addr show "$BR" 2>/dev/null | awk 'NR==1{sub(/\/.*/,"",$4); print $4}')
   if [[ -z "$base" ]]; then
-    base=$(ip -4 -o addr show eth0 2>/dev/null | awk 'NR==1{sub(/\/.*/,"",$4); print $4}')
+    base=$(ip -4 -o addr show "$UPLINK" 2>/dev/null | awk 'NR==1{sub(/\/.*/,"",$4); print $4}')
   fi
   [[ -n "$base" ]] || { warn "拿不到网段，先跑 01-ap-bridge.sh"; exit 1; }
   fixed=$(pick_ip "$base")
