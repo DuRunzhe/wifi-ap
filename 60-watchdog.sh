@@ -20,7 +20,9 @@
 #   MAX_TXERR=3        单个周期内 TX Err 新增超过该值算异常
 #   MIN_TXP_RATIO=5    每秒 tx_packets 低于该值算 beacon 可疑（正常 beacon 10/s）
 #   COOLDOWN=1800      两次自动恢复动作的最小间隔（秒）
-#   REBOOT_ON_FAIL=1   重启 hostapd 仍异常时是否重启整机（0=只记录并告警）
+#   REBOOT_ON_FAIL=0   重启 hostapd 仍异常时是否重启整机（默认 0=只记录并告警）
+                   ⚠️ 部分板子（单板 等）软重启会黑屏、必须断电冷启动，
+                      这种情况下开启本项会让设备彻底失联，请保持 0。
 set -uo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -29,7 +31,7 @@ WIFI=wlan0
 UNIT=hostapd-${BR}
 STATE_DIR=/var/lib/wifi-ap-watchdog
 STATE=$STATE_DIR/state
-LOG=/var/log/wifi-ap-watchdog.log
+LOG=$STATE_DIR/watchdog.log   # 放 /var/lib：/var/log 在部分 Orange Pi 镜像上是 zram，重启会丢
 INSTALL_PATH=/usr/local/lib/wifi-ap/watchdog.sh
 SELF=$(readlink -f "$0")
 
@@ -37,7 +39,7 @@ INTERVAL=${INTERVAL:-300}
 MAX_TXERR=${MAX_TXERR:-3}
 MIN_TXP_RATIO=${MIN_TXP_RATIO:-5}
 COOLDOWN=${COOLDOWN:-1800}
-REBOOT_ON_FAIL=${REBOOT_ON_FAIL:-1}
+REBOOT_ON_FAIL=${REBOOT_ON_FAIL:-0}   # 默认 0：软重启不安全的板子（如 单板）不应被自动重启
 LOG_MAX=1048576   # 1MB 截断
 
 ACTION=${1:-check}
@@ -78,7 +80,11 @@ rotate_log(){
 }
 
 # ---------------------------------------------------------------- 采集
-metric_txerr(){ dmesg 2>/dev/null | grep -c "TX Err" || true; }
+metric_txerr(){
+  # TX 队列卡死 + 固件通信失联（后者在部分固件上只报 beacon/start_ap 失败，不报 TX Err）
+  dmesg 2>/dev/null | grep -cE \
+    "TX Err|beacon failed|start_ap failed|SYNC CMD ERROR|SYNC_VERSION\]timeout" || true
+}
 metric_txp(){   cat "/sys/class/net/$WIFI/statistics/tx_packets" 2>/dev/null || echo 0; }
 metric_sta(){   hostapd_cli -i "$WIFI" all_sta 2>/dev/null | grep -cE '^[0-9a-f]{2}:' || true; }
 metric_state(){ hostapd_cli -i "$WIFI" status 2>/dev/null | sed -n 's/^state=//p'; }
