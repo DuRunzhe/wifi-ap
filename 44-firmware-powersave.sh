@@ -65,16 +65,24 @@ check() {
   ok "找到 $PARAM"
   info "当前值" "$(cat "$PARAM")  （1=已关固件省电）"
 
-  echo "== 空载 beacon 速率（15s 采样）"
+  echo "== 空载 tx_packets 采样（15s，仅参考）"
   local rate; rate=$(measure)
   info "tx_packets/s" "$rate"
-  if [[ "$rate" -ge 8 ]]; then
-    ok "beacon 速率正常（≥8/s），不是省电问题"
-  elif [[ "$rate" -ge 3 ]]; then
-    echo "  ⚠️  偏低（3~8/s）：可尝试 fix，但收益有限"
+  echo "  ⚠️  注意：空载时固件不把 beacon 计入 Linux 统计，这个数字常年只有 0~1，"
+  echo "     不能单独作为故障判据。真正的判据是客户端实测（能否稳定搜到 / 连上 / 持续收发）。"
+
+  echo "== 修复是否已应用"
+  local ps ini_pss applied=1
+  ps=$(cat "$PARAM" 2>/dev/null || echo 0)
+  local ini; ini=$(find_ini)
+  ini_pss=$(sed -n 's/^power_save_switch *= *//p' "$ini" 2>/dev/null | head -1)
+  [[ "$ps" == 1 ]] || applied=0
+  [[ "${ini_pss:-}" == 0 ]] || applied=0
+  if [[ $applied -eq 1 ]]; then
+    ok "已应用：模块参数=1 且 ini power_save_switch=0"
   else
-    bad "极低（${rate}/s）→ 高度怀疑固件省电压制 beacon"
-    echo "     修复：sudo bash $0 fix"
+    bad "未完全应用（模块参数=${ps}，ini power_save_switch=${ini_pss:-未找到}）"
+    echo "     修复：sudo bash $0 fix   （改完需重启才彻底生效）"
   fi
 
   echo "== 固件 ini（power_save_switch）"
@@ -128,14 +136,10 @@ EOF
     echo "  ⚠️  未找到 wifi ini，跳过第 ② 步"
   fi
 
-  sleep 3
-  local rate; rate=$(measure)
-  info "修复后 tx_packets/s" "$rate"
-  if [[ "$rate" -ge 8 ]]; then
-    ok "beacon 速率已恢复正常"
-  else
-    echo "  ⚠️  仍未提升：可能本机是射频/天线问题，见 43-ssid-visibility.sh 第 4 节"
-  fi
+  echo
+  echo "  修复已写入。提醒：空载 tx_packets 本来就很低（固件不统计 beacon），"
+  echo "  请用客户端实测验证：能否稳定搜到 SSID、连上后能否持续收发。"
+  echo "  复核：sudo bash $0 check"
 }
 
 revert() {
