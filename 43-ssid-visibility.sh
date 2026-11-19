@@ -180,6 +180,8 @@ diagnose() {
   fi
 
   sec "5. 结论与建议（按顺序试）"
+  echo "  ⓪ 先排除天线：手机贴到 10cm 能搜到、2m 没有 = IPEX 天线没接好/线断"
+  echo "     （Zero 2 / Zero 3 无板载天线；这是「信号弱」的头号原因）"
   local ch; ch=$(sv channel)
   if [[ "$ch" -ge 149 ]] 2>/dev/null; then
     echo "  ① 当前在 5.8G（ch$ch = UNII-3）：部分手机/国行设备扫不到这个频段"
@@ -189,7 +191,7 @@ diagnose() {
   fi
   echo "  ①.5 「时有时无」→ 先查固件省电：sudo bash 44-firmware-powersave.sh check"
   echo "  ② 2.4G 仍然不行 → 降带宽：  sudo bash $0 --switch 2g 6 20"
-  echo "  ③ 两个频段都搜不到 → 几乎确定是天线/射频：检查 IPEX 天线、换天线、贴近 10cm 试"
+  echo "  ③ 两个频段都搜不到 → 天线/射频：检查 IPEX 天线是否扣到位、换根天线再试"
   echo "  ④ 客户端能连但上不了网 → 看桥转发：sudo bash 01-verify-intrabss.sh"
 }
 

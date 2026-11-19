@@ -3,13 +3,16 @@
 # 44-firmware-powersave.sh — 修复「AP 明明 ENABLED，客户端却时有时无 / 搜不到」
 #
 # 症状（实测）：
-#   hostapd state=ENABLED、桥正常、内核无错误，但空载 wlan0 的 tx_packets
-#   只有 ~0.4 包/s（正常 AP 的 beacon 是 10/s）。
-#   手机每个信道只停留 ~100ms，撞上 beacon 的概率约 4% → 表现为「时有时无」。
+#   hostapd state=ENABLED、桥正常、内核无错误、天线也正常，但客户端「时有时无 / 偶尔才搜到」。
+#   判据只能是**客户端实测**：空载 wlan0 的 tx_packets 在 0~4/s 间乱跳
+#   （sprdwl_ng 不把固件发出的 beacon 计入 Linux 统计），不能用来判故障。
 #
 # 根因：
-#   sprdwl_ng（Unisoc UWE5622）固件默认开启 power save，进入省电后会把
-#   beacon 发送频率压到极低。关掉固件的 power save 后 tx 立刻回到 100+/s。
+#   sprdwl_ng（Unisoc UWE5622）固件默认开启 power save（ini power_save_switch=2），
+#   进入省电后 beacon 发送变稀疏，手机每信道只停留 ~100ms，容易整轮扫不到。
+#
+# ⚠️ 先排除天线：手机贴到 10cm 能搜到、2m 没有 = IPEX 天线没接好/线断，
+#    这种情况本脚本帮不上（Zero 2 / Zero 3 都没有板载天线）。
 #
 # 修复分两层（都要做）：
 #   ① 模块参数 disable_powersave=1 —— 运行期生效，但固件只在「下一次 power-down 请求」采纳

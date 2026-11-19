@@ -102,11 +102,13 @@ sudo bash 43-ssid-visibility.sh --switch 2g   # 最兼容：2.4G ch6 + HT20
 ```
 
 常见顺序（实测）：
-0. **「时有时无」** → 先看空载 beacon 速率：`sudo bash 44-firmware-powersave.sh check`。
-   `sprdwl_ng` 固件默认省电会把 beacon 压到 ~0.4/s（正常 10/s），手机每信道只停 100ms，
-   命中率约 4%，表现就是偶尔出现。`fix` 后 tx 直接回到 100+/s。
-1. **5.8G（ch149~165）部分手机扫不到** → 切 2.4G 立刻可见
-2. 2.4G 仍不行 → 降带宽 `--switch 2g 6 20`（HT40+ 在个别固件下不出 SSID）
+0. **先确认天线与距离** —— 手机贴到 10cm 能搜到、2m 左右没信号 = **IPEX 天线没接好/线断**
+   （Zero 2 / Zero 3 无板载天线）。这是「信号弱」的头号原因，先排除再谈其它。
+1. **「时有时无」但天线正常** → 查固件省电：`sudo bash 44-firmware-powersave.sh check`。
+   `sprdwl_ng` 默认 `power_save_switch=2` 时 beacon 变稀疏，手机每信道只停 100ms 就容易漏，
+   表现是「偶尔能看到」。`fix` 后明显改善。
+2. **5.8G（ch149~165）部分手机扫不到** → 切 2.4G 立刻可见
+3. 2.4G 仍不行 → 降带宽 `--switch 2g 6 20`（HT40+ 在个别固件下不出 SSID）
 3. 两个频段都不行、且 `iw scan` 连邻居 AP 都扫不到 → **天线/射频**（IPEX 未扣好/接触不良），
    此时发射弱到只有 10~20cm 内能收到，表现就是「时有时无」
 

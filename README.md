@@ -3,6 +3,9 @@
 > **已在 Orange Pi Zero 2（H616）与 Zero 3（H618）上实测**，脚本按能力自动探测、不写死板型；
 > 主要面向 Unisoc UWE5622（AW859A）+ `sprdwl_ng` 这类 SDIO 无线网卡，其它驱动见「设备兼容性」一节的差异说明。
 >
+> ⚠️ **硬件前提（最容易踩）**：Zero 2 / Zero 3 都**没有板载天线**，必须接 IPEX(U.FL) 外置天线。
+> 天线没扣好时 2.4G 只有十几厘米有效距离、2 米基本无信号，5G 更差 —— 排查任何「搜不到」之前先确认这一点。
+>
 > 目标：其他设备通过 WiFi 连上来 → ① 和有线设备同一个内网 + 能上外网 → ② 加网络代理 → ③ 作为**统一 WiFi 入口**，
 > 让连上来的设备之间互访**不跨越主路由的多个 AP**
 > 前置约束：**主路由完全不可操作**（不能改 DHCP、不能加路由、不能固定 AP 分配）
@@ -38,7 +41,8 @@ wifi-ap/
 
 | 项 | 结论 |
 |---|---|
-| 无线网卡 | `wlan0` = Unisoc UWE5622（`sprdwl_ng`），**支持 AP 模式**；2.4G 全信道可用，5G 是否可用取决于系统（见兼容性表） |
+| 无线网卡 | `wlan0` = Unisoc UWE5622（`sprdwl_ng`），**支持 AP 模式**；2.4G 全信道可用，5G 见兼容性表 |
+| **天线** | **外置 IPEX-1（U.FL）**，板载无 PCB 天线。**没接好 = 2.4G 只有 10~20cm、5G 基本搜不到**（实测：10cm 可搜、2m 消失）。这是排查「信号弱 / 搜不到」的第一检查项 |
 | **只能开 1 个 AP** | `valid interface combinations: #{ managed, AP } <= 1` → 双 SSID 在本硬件上不可行 |
 | hostapd | Zero 2 上 2.9 / Zero 3 上 2.11；`/etc/default/hostapd` 通常没有 `DAEMON_CONF` → 系统自带的 hostapd 服务"启动"了其实没跑，本方案用独立的 `hostapd-br0.service` |
 | 旧配置 bug | `/etc/hostapd.conf` 里是 `interface=p2p-dev-wlan0`（P2P 口，不能做 AP）→ 本方案另写配置，不动它 |
@@ -59,12 +63,16 @@ wifi-ap/
 | **空载 `tx_packets`** | 0.4~10/s 之间浮动 | 同样浮动 —— **这个数字不是判据**：`sprdwl_ng` 不把固件发出的 beacon 计入 Linux 统计，空载基本不涨，有客户端才明显增长。`60-watchdog.sh` 已改为「仅在有客户端时按 tx 判活」 |
 | 2.4G AP | ✅ 全信道（ch1~13） | ✅ 同样；**建议 HT20**（`43-ssid-visibility.sh --switch 2g` 默认） |
 | 2.4G HT40 | 可用 | 可用，但个别手机/驱动组合下扫不到 SSID → 优先 HT20 |
-| **5G AP** | ✅ ch149~165 / VHT80 正常（官方 Bullseye 1.0.2 实测） | **看系统**：官方 Bullseye 1.0.2 正常；**Armbian 26.11 / 6.18.63 不可用**（hostapd 能起在 ch149 且 `state=ENABLED`，但客户端搜不到；已试遍全部 5G 信道/带宽/`ieee80211d`/省电参数/整机重启均无效） |
+| **5G AP** | ✅ ch149~165 / VHT80 正常（官方 Bullseye 1.0.2 实测） | ⚠️ **尚无定论**：Armbian 26.11 上曾出现「hostapd `state=ENABLED` 在 ch149，但客户端搜不到」，但那次测试是在**天线未接好（2m 即无信号）**的前提下做的，不能据此判定「5G 不可用」。接好天线后按 `43-ssid-visibility.sh --switch 5g 149` 复测再下结论 |
 | 5G 不可用信道 | — | ch36/44/48 固件直接拒绝（`Could not select hw_mode and channel`）；能用时也只有 ch149~165 |
-| **固件省电压 beacon** | 未复现 | **默认 beacon ≈0.4/s** → 手机「时有时无」，需 `44-firmware-powersave.sh fix` |
+| **固件省电压 beacon** | 未复现 | 默认 `power_save_switch=2` → beacon 稀疏、客户端「时有时无」（与信号强度是两回事）；`44-firmware-powersave.sh fix` 后实测改善 |
 | 默认建议 | 5G ch149 / VHT80 | **2.4G ch6 / HT20**（兼容优先） |
 
-> **客户端「时有时无」时的第一件事**（Zero3 实测踩过）：
+> **客户端「搜不到 / 时有时无」时的第一件事**：先确认天线与距离（10cm 能搜到、2m 没有 = 天线问题，见上表「天线」行）。
+>
+> 排除天线后，再按下面顺序：
+>
+> **「时有时无」→ 查固件省电**（Zero3 实测踩过）：
 > ```bash
 > sudo bash 44-firmware-powersave.sh check   # 看修复是否已应用（空载 tx 不能当判据，见 44 的说明）
 > sudo bash 44-firmware-powersave.sh fix     # 关固件省电并持久化
@@ -221,19 +229,30 @@ tail -f /var/log/hostapd-br0.log      # 一边排查一边看
 iw dev wlan0 info                     # 应有 ssid / type AP / channel
 ```
 
-### 0. 「时有时无」——先查固件省电（实测最容易中招）
+### 0. 先确认「天线 + 距离」（命中率最高，且不用改任何东西）
 
-`hostapd` 明明 `state=ENABLED`，手机却时有时无、偶尔才出现，**先跑这个**：
+**判断方法**：把手机贴着板子（10cm 内）扫一次。
+
+| 结果 | 结论 |
+|---|---|
+| 10cm 能搜到、2m 左右就没了 | **天线没接好 / 线断了** → 检查 IPEX 座是否扣到位、换根天线 |
+| 10cm 也搜不到 | 继续往下看（固件省电 / 频段 / 驱动） |
+
+Zero 2 / Zero 3 没有板载天线，这是「信号弱」最常见的唯一原因，也是很多「时好时坏」的假象来源。
+
+### 1. 「时有时无」——查固件省电
+
+`hostapd` 明明 `state=ENABLED`、天线也正常，手机却时有时无：
 
 ```bash
-sudo bash ~/wifi-ap/44-firmware-powersave.sh check   # 采样空载 beacon 是否被固件省电压制
+sudo bash ~/wifi-ap/44-firmware-powersave.sh check   # 看修复是否已应用
 sudo bash ~/wifi-ap/44-firmware-powersave.sh fix     # 关省电（模块参数 + 固件 ini，需重启）
 ```
 
-`sprdwl_ng` 默认进入固件省电后，beacon 会降到约 0.4/s（正常 10/s）；手机每个信道只停约 100ms，
-命中率只有几个百分点，表现就是「偶尔能看到、连上也不稳」。
+`sprdwl_ng` 默认 `power_save_switch=2` 时 beacon 会变稀疏；手机每个信道只停约 100ms，
+命中率下降，表现就是「偶尔能看到、连上也不稳」。
 
-### 1. 搜不到 SSID
+### 2. 搜不到 SSID
 
 ```bash
 sudo bash ~/wifi-ap/43-ssid-visibility.sh              # 一键诊断：状态/桥/rfkill/周边扫描/射频线索
@@ -241,14 +260,14 @@ sudo bash ~/wifi-ap/43-ssid-visibility.sh --switch 2g  # 切 2.4G ch6 / HT20（�
 sudo bash ~/wifi-ap/43-ssid-visibility.sh --switch 5g  # 切 5G ch149 / VHT80（吞吐优先）
 ```
 
-优先级（按实测命中率）：
+优先级（天线已排除的前提下）：
 
 1. **5.8G 兼容性** —— 5G ch149 属 UNII-3，部分手机/网卡扫不到；切 2.4G 立刻可见
 2. **带宽** —— 2.4G 的 HT40+ 在个别驱动/固件组合下不出 SSID；HT20 最稳
-3. **固件省电** —— 见上面第 0 节
-4. **系统/驱动差异** —— 例如 Zero 3 + Armbian 26.11 下 5G AP 不可用（见兼容性表），此时只能固定 2.4G
+3. **固件省电** —— 见第 1 节
+4. **系统/驱动差异** —— 例如某些系统上 5G AP 起得来但客户端搜不到（见兼容性表，目前尚无定论，需接好天线后复测）
 
-### 2. 能搜到但连不上 / 反复提示密码错误
+### 3. 能搜到但连不上 / 反复提示密码错误
 
 日志里如果刷这几行：
 
@@ -267,7 +286,7 @@ wlan0: STA <MAC> IEEE 802.11: disassociated
 qrencode -t ANSIUTF8 "WIFI:T:WPA;S:<SSID>;P:<密码>;;"
 ```
 
-### 3. 连上了但没网 / 拿不到 IP
+### 4. 连上了但没网 / 拿不到 IP
 
 WiFi 客户端 IP 由**主路由 DHCP** 分配（桥接模式）。排查：
 
@@ -333,7 +352,7 @@ sudo bash ~/wifi-ap/60-watchdog.sh status      # 看最近判定 / 历史动作
 |---|---|---|
 | `hostapd` state | 非 `ENABLED` | ✅ 硬信号 |
 | `wlan0` 模式 | 非 `type AP` | ✅ 硬信号 |
-| `tx_packets` 增速 | 有客户端时 < 1/s | ✅ 硬信号（**空载不判**，因为固件不统计 beacon，实测空载恒为 ~0.4/s） |
+| `tx_packets` 增速 | 有客户端时 < 1/s | ✅ 硬信号（**空载不判**：固件不统计 beacon，实测空载在 0~4/s 间乱跳，没有任何判断价值） |
 | 固件报错单周期新增 | > 3 | ✅ `beacon failed` / `start_ap failed` / `SYNC CMD ERROR` / `SYNC_VERSION]timeout` |
 | `TX Err` 单周期新增 | > 3 | ❌ 只写日志告警（驱动会长期低频报它，当触发条件会周期性误重启） |
 
