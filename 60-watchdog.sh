@@ -18,11 +18,13 @@
 # 调参（install 时写入 unit 的 Environment=）：
 #   INTERVAL=300       检查间隔（秒）
 #   MAX_TXERR=3        单个周期内 TX Err 新增超过该值算异常
-#   MIN_TXP_RATIO=5    每秒 tx_packets 低于该值算 beacon 可疑（正常 beacon 10/s）
+#   MIN_TXP_RATIO=1    有客户端时每秒 tx_packets 低于该值算可疑
+#                      注意：空载 beacon 计数因芯片/固件而异 —— Zero2 ≈10/s、Zero3 ≈1/s，
+#                      所以「空载不判 tx」，只在有客户端时判，避免把健康 AP 误重启。
 #   COOLDOWN=1800      两次自动恢复动作的最小间隔（秒）
 #   REBOOT_ON_FAIL=0   重启 hostapd 仍异常时是否重启整机（默认 0=只记录并告警）
-                   ⚠️ 部分板子（单板 等）软重启会黑屏、必须断电冷启动，
-                      这种情况下开启本项会让设备彻底失联，请保持 0。
+#                       ⚠️ 部分板子软重启会黑屏、必须断电冷启动，
+#                       这种情况下开启本项会让设备彻底失联，请保持 0。
 set -uo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -37,9 +39,9 @@ SELF=$(readlink -f "$0")
 
 INTERVAL=${INTERVAL:-300}
 MAX_TXERR=${MAX_TXERR:-3}
-MIN_TXP_RATIO=${MIN_TXP_RATIO:-5}
+MIN_TXP_RATIO=${MIN_TXP_RATIO:-1}
 COOLDOWN=${COOLDOWN:-1800}
-REBOOT_ON_FAIL=${REBOOT_ON_FAIL:-0}   # 默认 0：软重启不安全的板子（如 单板）不应被自动重启
+REBOOT_ON_FAIL=${REBOOT_ON_FAIL:-0}   # 默认 0：软重启不安全的板子不应被自动重启
 LOG_MAX=1048576   # 1MB 截断
 
 ACTION=${1:-check}
@@ -125,7 +127,11 @@ evaluate(){
 
   [[ $state == ENABLED ]] || REASONS+=("hostapd state=${state:-未知}")
   iw dev "$WIFI" info 2>/dev/null | grep -q 'type AP' || REASONS+=("$WIFI 不是 AP 模式")
-  [[ $per_sec -lt $MIN_TXP_RATIO ]] && REASONS+=("tx_packets ${per_sec}/s < ${MIN_TXP_RATIO}/s（beacon 疑似停发）")
+  # 只在有客户端时才用 tx 速率判活（空载 beacon 计数因芯片而异，见文件头）
+  local sta_now; sta_now=$(metric_sta)
+  if [[ ${sta_now:-0} -gt 0 && $per_sec -lt $MIN_TXP_RATIO ]]; then
+    REASONS+=("有客户端但 tx_packets ${per_sec}/s < ${MIN_TXP_RATIO}/s（疑似停发）")
+  fi
 
   txerr_delta=$(( txerr - LAST_TXERR ))
   [[ $txerr_delta -gt $MAX_TXERR ]] && TXRERR_NOTE="TX Err 本周期新增 $txerr_delta（仅告警；beacon 正常时不动作）"
@@ -157,9 +163,10 @@ recover(){
   sleep 20
 
   # 复测：只看 beacon 是否恢复
-  local p1 p2 per
+  local p1 p2 per sta
   p1=$(metric_txp); sleep 10; p2=$(metric_txp); per=$(( (p2 - p1) / 10 ))
-  if [[ $per -ge $MIN_TXP_RATIO && $(metric_state) == ENABLED ]]; then
+  sta=$(metric_sta)
+  if [[ $(metric_state) == ENABLED ]] && { [[ ${sta:-0} -eq 0 ]] || [[ $per -ge $MIN_TXP_RATIO ]]; }; then
     log "重启 hostapd 后已恢复（tx_packets ${per}/s）"
     save_state "$(metric_txerr)" "$(metric_txp)" "$(date +%s)" "$CUR_NOW" 0
     return 0
@@ -289,7 +296,7 @@ EOF
 
   systemctl daemon-reload
   systemctl enable --now wifi-ap-watchdog.timer >/dev/null 2>&1
-  log "已安装：timer 每 ${INTERVAL}s 自检；硬信号（hostapd 非 ENABLED / 非 AP / tx_packets<${MIN_TXP_RATIO}/s）连续 2 次触发恢复，冷却 ${COOLDOWN}s，REBOOT_ON_FAIL=${REBOOT_ON_FAIL}"
+  log "已安装：timer 每 ${INTERVAL}s 自检；硬信号（hostapd 非 ENABLED / 非 AP / 有客户端且 tx_packets<${MIN_TXP_RATIO}/s）连续 2 次触发恢复，冷却 ${COOLDOWN}s，REBOOT_ON_FAIL=${REBOOT_ON_FAIL}"
   say "✅ 已安装并启动 wifi-ap-watchdog.timer"
   say "  脚本位置: $INSTALL_PATH"
   say "  检查间隔: ${INTERVAL}s   冷却: ${COOLDOWN}s   失败后重启整机: ${REBOOT_ON_FAIL}"
